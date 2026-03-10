@@ -1,0 +1,158 @@
+---
+title: "Comportamiento del precio de las acción de la empresa América Móvil 2020-2026"
+author: "Maria Guadalupe Ramirez Calvillo"
+format: html
+editor: visual
+---
+
+***A continuación se presenta la exploración y analisis del comportamiento del precio de las acciones de la empresa América Móvil, utilizando dos enfoques, caminata aletoria que se utilizara para explorar los datos y ver si en realidad cumple con las caracteristicas de utilizar dicho enfoque y posteriormente ajustar con un modelo ARIMA para poder ver el comportamiento de los precios.***
+
+**Cargamos librerías necesarias**
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(lubridate)
+```
+
+**Cargamos y limpiamos la base de datos que vamos a utilizar, que consta de los precios de las acciones de America movil (AMXB) cotizadas en pesos de la bolsa de valores BIBA, que se obtuvo de la pagina investing. El periodo que se quiere analizar es del 8 de marzo del 2020 al 1 de marzo del 2026, donde dichos datos se persiben semanalmente.**
+
+```{r}
+amovile <- read.csv("A. Movil.csv")
+
+head(amovile)
+```
+
+```{r}
+# convertir fecha
+amovile$fecha <- dmy(amovile$fecha)
+
+# convertir precios a numerico
+amovile$cierre <- as.numeric(gsub(",", ".", amovile$cierre))
+
+# ordenar por fecha
+amovile <- amovile %>%
+  arrange(fecha)
+```
+
+## Graficamos el precio de la acción
+
+```{r}
+str(amovile)
+amovile$cierre <- as.numeric(gsub(",", "", amovile$cierre))
+amovile <- na.omit(amovile)
+
+```
+
+```{r}
+ggplot(amovile, aes(x = fecha, y = cierre)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Precio de cierre de la acción de América Móvil",
+    x = "Fecha",
+    y = "Precio"
+  ) +
+  theme_minimal()
+
+```
+
+En esta gráfica se puede observar la evolucion del precio de la acción a lo largo que pasa el tiempo.
+
+# Convertimos a serie de tiempo
+
+```{r}
+amovile_ts <- ts(amovile$cierre, frequency = 52)
+
+plot(amovile_ts)
+```
+
+La serie de los precios de la accion se convierte en serie de tiempo, ya que nos facilita el analisis, donde la frecuencia es de 52 que corresponde a los datos que son semanalmente.
+
+# Realizamos el modelo de Caminata Aleatoria
+
+```{r}
+# Modelo de caminata aleatoria
+modelo_rw <- rwf(amovile_ts, h = 12)
+
+# Graficar pronóstico
+plot(modelo_rw)
+```
+
+Este modelo de caminata aleatoria que se aplico en la seria de precios de la accion de America Movil
+
+# Realizamos una transformacion logaritmica
+
+```{r}
+log_amovile_ts <- log(amovile_ts)
+
+#Creo variables dummies para la serie en diferencias logaritmicas
+X_dummies_log <- seasonaldummy(log_amovile_ts)
+
+plot(log_amovile_ts, main = "America Movil")
+
+
+
+```
+
+La transformación logaritmica se utiliza para poder estabilizar la varianza de la serie y así facilitar el analisis de las variaciones relativas.
+
+## Ajustar tamaño por la diferenciación
+
+```{r}
+
+X_dummies_diff_log <- X_dummies_log[-1, ]
+
+#realizamos una diferencia sobre la serie logaritmica
+diff_log_amovile_ts <- diff(log_amovile_ts)
+plot(diff_log_amovile_ts, main = "Serie America Movil")
+
+```
+
+Calculamos la primera diferencia logaritmica, ya que esto nos permite eliminar y trabajr con una serie de datos más cercana a la estacionariedad.
+
+# Funciones de autocorrelación
+
+```{r}
+acf(diff_log_amovile_ts)
+
+pacf(diff_log_amovile_ts)
+```
+
+Estas funciones de autocorrelación nos ayudan a identificar patrones de la autocorrelacion en la serie de datos. Donde, **ACF** nos permite analizar de una mejor manera la relacion entre los valores actuales de la serie de datos y sus rezagos, y nos ayuda también a identificar los patrones de dependencia temporal en los precios de la acción, posteriormente la gráfica **PACF** nos muestra la correlación directa entre la serie de datos y los resagos que tiene, eliminando asi el efecto de los rezagos intermedios.
+
+```{r}
+tail(X_dummies_diff_log)
+```
+
+## CREAR EL MODELO Modelo ARIMA (1,1,1) Cuando al modelo ARIMA se le añaden las variables dummies se le llama ARIMAX
+
+```{r}
+model <- arima(
+  diff_log_amovile_ts, 
+  order = c(1, 0, 1)
+)
+
+summary(model)
+```
+
+Estimamos el modelo ARIMA utilizando el modelo de **AIC**, para poder seleccionar de manera automatica la mejor combinación de los parametros.
+
+# Pronóstico
+
+```{r}
+pronostico_arima <- forecast(model, h=12)
+  
+plot(pronostico_arima)
+```
+
+Con este modelo generamos el pronostico del comportamiento que se puede obtener a futuro del precio de la acción utilizando el modelo **ARIMA**.
+Finalmente decidí descartar las variables dummy porque en mi serie de tiempo no presento patriones estacionales, no aportaron una mejora significativa en mi modelo
+
+## Comparacion
+
+```{r}
+accuracy(modelo_rw)
+accuracy(pronostico_arima)
+```
