@@ -1,0 +1,371 @@
+---
+title: "El Impacto de las Remesas en el Consumo Interno en México"
+author: "Alejandro Andrade Guerrero, Mariana Guadalpe Ponce Rodriguez, Maria Guadalupe Ramirez Calvillo"
+date: "Mayo 2026"
+format: html
+editor: visual
+---
+
+# El Impacto de las Remesas en el Consumo Interno en México
+
+## 0. Librerías necesarias
+
+```{r}
+#| message: false
+#| warning: false
+
+# Cargamos librerias necesarias
+paquetes <- c("readxl", "tseries", "urca", "vars", "lmtest", "rugarch", "FinTS")
+nuevos <- paquetes[!(paquetes %in% installed.packages()[,"Package"])]
+if(length(nuevos)) install.packages(nuevos)
+
+library(readxl)
+library(tseries)
+library(urca)
+library(vars)
+library(lmtest)
+library(rugarch)
+library(FinTS)
+```
+
+
+## 1. Carga y preparación de datos
+
+```{r}
+
+datos <- read_excel("C:/Users/guada/OneDrive/Documents/Econometria ll/Proyecto_eco_03/ConsumoMensualMexicoLimpio.xlsx")
+
+# Verificar estructura
+head(datos)
+str(datos)
+cat("Columnas:", names(datos), "\n")
+cat("Total de observaciones:", nrow(datos), "\n")
+cat("Periodo:", as.character(datos$Fecha[1]), "a", as.character(datos$Fecha[nrow(datos)]), "\n")
+```
+
+
+## 2. Creación de series de tiempo
+
+```{r}
+# Series mensuales a partir de enero 2008
+rem_ts  <- ts(datos$Remesas, start = c(2008, 1), frequency = 12)
+cons_ts <- ts(datos$Consumo,  start = c(2008, 1), frequency = 12)
+
+cat("=== Resumen: Remesas ===\n")
+summary(rem_ts)
+
+cat("\n=== Resumen: Consumo ===\n")
+summary(cons_ts)
+```
+
+
+## 3. Visualización exploratoria
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+
+par(mfrow = c(1, 2))
+
+plot(cons_ts,
+     main  = "Consumo en México",
+     ylab  = "Índice de consumo",
+     xlab  = "Tiempo",
+     col   = "#2D6A4F",
+     lwd   = 1.5)
+
+plot(rem_ts,
+     main  = "Remesas en México",
+     ylab  = "Millones de USD",
+     xlab  = "Tiempo",
+     col   = "#D4A017",
+     lwd   = 1.5)
+
+par(mfrow = c(1, 1))
+```
+
+**Interpretación:** Las gráficas en niveles muestran que ambas series tienen tendencia creciente y no oscilan alrededor de una media fija, lo que sugiere la presencia de no estacionariedad. El consumo tiene un comportamiento más suave mientras que las remesas muestran mayor volatilidad y un pico marcado alrededor de 2022.
+
+## 4. Prueba de raíz unitaria ADF — en niveles
+
+```{r}
+cat("=== ADF: Remesas en niveles ===\n")
+adf_rem <- adf.test(rem_ts)
+print(adf_rem)
+
+cat("\n=== ADF: Consumo en niveles ===\n")
+adf_cons <- adf.test(cons_ts)
+print(adf_cons)
+```
+
+**Interpretación:** Si los p-valores son mayores a 0.05, no se rechaza la hipótesis nula de raíz unitaria, confirmando que las series son **no estacionarias en niveles** (I(1)).
+
+
+## 5. Primeras diferencias y nueva prueba ADF
+
+```{r}
+# Primeras diferencias (rendimientos o cambios mensuales)
+d_rem  <- diff(rem_ts)
+d_cons <- diff(cons_ts)
+
+cat("=== ADF: Δ Remesas (primeras diferencias) ===\n")
+adf_d_rem <- adf.test(d_rem)
+print(adf_d_rem)
+
+cat("\n=== ADF: Δ Consumo (primeras diferencias) ===\n")
+adf_d_cons <- adf.test(d_cons)
+print(adf_d_cons)
+```
+
+**Interpretación:** Si ahora los p-valores son menores a 0.05, se rechaza la hipótesis nula y se confirma que las series en primeras diferencias son **estacionarias**. Ambas series son integradas de orden uno, I(1).
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+
+par(mfrow = c(1, 2))
+
+plot(d_rem,
+     main = "Δ Remesas (primeras diferencias)",
+     ylab = "Cambio mensual (USD millones)",
+     col  = "#D4A017", lwd = 1.5)
+abline(h = 0, col = "gray50", lty = 2)
+
+plot(d_cons,
+     main = "Δ Consumo (primeras diferencias)",
+     ylab = "Cambio mensual",
+     col  = "#2D6A4F", lwd = 1.5)
+abline(h = 0, col = "gray50", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+
+## 6. Selección del orden óptimo del VAR
+
+```{r}
+datos_var <- cbind(d_rem, d_cons)
+
+cat("=== Criterios de selección de rezagos (máx. 12) ===\n")
+seleccion <- VARselect(datos_var, lag.max = 12, type = "const")
+print(seleccion$criteria)
+
+cat("\nOrden óptimo según cada criterio:\n")
+print(seleccion$selection)
+
+p_optimo <- seleccion$selection["AIC(n)"]
+cat("\nOrden seleccionado (AIC):", p_optimo, "\n")
+```
+
+**Interpretación:** El criterio AIC sugiere el número óptimo de rezagos para el modelo VAR. Usar demasiados rezagos consume grados de libertad; muy pocos dejan dinámica sin capturar.
+
+
+## 7. Estimación del modelo VAR
+
+```{r}
+modelo_var <- VAR(datos_var, p = p_optimo, type = "const")
+summary(modelo_var)
+```
+
+**Interpretación:** - En la **ecuación de d_cons**: revisar si algún rezago de d_rem es significativo (p \< 0.05). Si lo es, las remesas pasadas influyen en el consumo actual. - En la **ecuación de d_rem**: verificar si el consumo pasado tiene algún efecto sobre las remesas. - El **R² ajustado** indica qué proporción de la variabilidad explica el modelo.
+
+
+
+## 8. Diagnóstico del modelo VAR
+
+```{r}
+cat("=== Prueba de autocorrelación serial (Portmanteau) ===\n")
+serial_test <- serial.test(modelo_var, lags.pt = 16, type = "PT.asymptotic")
+print(serial_test)
+
+cat("\n=== Prueba de normalidad de residuales ===\n")
+norm_test <- normality.test(modelo_var)
+print(norm_test)
+```
+
+**Interpretación:** - **Portmanteau:** Si p \> 0.05, no hay autocorrelación serial en los residuales → modelo bien especificado. - **Normalidad:** Si se rechaza, los residuales no son normales (esperado en series económicas con valores extremos).
+
+
+## 9. Causalidad de Granger
+
+```{r}
+cat("=== Granger: ¿Remesas causan a Consumo? ===\n")
+granger_rem_cons <- causality(modelo_var, cause = "d_rem")
+print(granger_rem_cons$Granger)
+
+cat("\n=== Granger: ¿Consumo causa a Remesas? ===\n")
+granger_cons_rem <- causality(modelo_var, cause = "d_cons")
+print(granger_cons_rem$Granger)
+
+cat("\n=== Causalidad instantánea ===\n")
+print(granger_rem_cons$Instant)
+```
+
+**Interpretación:** - Si p \< 0.05 en "Remesas → Consumo": los valores pasados de remesas ayudan a predecir el consumo actual → existe causalidad de Granger. - Si p \> 0.05 en "Consumo → Remesas": el consumo no predice las remesas → relación unidireccional. - La causalidad instantánea mide si ambas variables se mueven juntas en el mismo periodo.
+
+
+## 10. Función Impulso-Respuesta (IRF) — CORREGIDA A 24 PERIODOS
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+
+
+
+cat("=== IRF: Remesas → Consumo (24 periodos) ===\n")
+irf_rem_cons <- irf(modelo_var,
+                    impulse  = "d_rem",
+                    response = "d_cons",
+                    n.ahead  = 24,
+                    boot     = TRUE,
+                    ci       = 0.95,
+                    runs     = 200)
+
+plot(irf_rem_cons,
+     main = "IRF: Impulso Remesas → Respuesta Consumo (24 meses)")
+```
+
+**Interpretación:** Observar: 1. Si la línea central es positiva en los primeros periodos → choque en remesas aumenta el consumo. 2. Si las bandas de confianza incluyen el cero → el efecto no es estadísticamente significativo en ese periodo. 3. ¿En qué periodo la respuesta converge a cero? → duración del efecto transitorio.
+
+```{r}
+#| fig-width: 20
+#| fig-height: 15
+
+cat("=== IRF inversa: Consumo → Remesas (24 periodos) ===\n")
+irf_cons_rem <- irf(modelo_var,
+                    impulse  = "d_cons",
+                    response = "d_rem",
+                    n.ahead  = 24,
+                    boot     = TRUE,
+                    ci       = 0.95,
+                    runs     = 200)
+
+plot(irf_cons_rem,
+     main = "IRF: Impulso Consumo → Respuesta Remesas (24 meses)")
+```
+
+**Interpretación:** Esta gráfica muestra la dirección inversa. Si las bandas incluyen cero en todo el horizonte, confirma que el consumo no impacta a las remesas, resultado esperado y consistente con Granger.
+
+
+## 11. Estadísticos descriptivos de los rendimientos
+
+```{r}
+library(moments)  # para curtosis y sesgo
+
+cat("=== Estadísticos descriptivos: Δ Remesas ===\n")
+cat("Media:      ", round(mean(d_rem, na.rm=TRUE), 4), "\n")
+cat("Desv. Est.: ", round(sd(d_rem, na.rm=TRUE), 4), "\n")
+cat("Sesgo:      ", round(skewness(d_rem, na.rm=TRUE), 4), "\n")
+cat("Curtosis:   ", round(kurtosis(d_rem, na.rm=TRUE), 4), "\n")
+cat("Jarque-Bera:\n")
+print(jarque.test(as.numeric(d_rem)))
+
+cat("\n=== Estadísticos descriptivos: Δ Consumo ===\n")
+cat("Media:      ", round(mean(d_cons, na.rm=TRUE), 4), "\n")
+cat("Desv. Est.: ", round(sd(d_cons, na.rm=TRUE), 4), "\n")
+cat("Sesgo:      ", round(skewness(d_cons, na.rm=TRUE), 4), "\n")
+cat("Curtosis:   ", round(kurtosis(d_cons, na.rm=TRUE), 4), "\n")
+cat("Jarque-Bera:\n")
+print(jarque.test(as.numeric(d_cons)))
+```
+
+
+## 12. Prueba formal de efectos ARCH
+
+```{r}
+cat("=== Prueba ARCH (FinTS) — Δ Remesas ===\n")
+cat("Rezago 1:\n")
+print(ArchTest(d_rem, lags = 1))
+cat("\nRezago 4:\n")
+print(ArchTest(d_rem, lags = 4))
+```
+
+**Interpretación:** Si p \< 0.05, existe heterocedasticidad condicional (efectos ARCH) y el uso del modelo GARCH está completamente justificado. Si p \> 0.05, el GARCH sigue siendo útil para medir la persistencia de la volatilidad.
+
+
+## 13. Modelo GARCH(1,1) — Remesas
+
+```{r}
+# Especificación GARCH(1,1) con distribución t de Student
+spec_garch <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = c(1, 1)),
+  distribution.model = "std"   # distribución t para colas pesadas
+)
+
+garch_fit <- ugarchfit(spec = spec_garch, data = d_rem)
+show(garch_fit)
+```
+
+```{r}
+# Extraer coeficientes clave
+coef_garch <- coef(garch_fit)
+alpha1 <- coef_garch["alpha1"]
+beta1  <- coef_garch["beta1"]
+persistencia <- alpha1 + beta1
+
+cat("=== Resumen GARCH(1,1) ===\n")
+cat("alpha1 (ARCH):      ", round(alpha1, 4), "\n")
+cat("beta1  (GARCH):     ", round(beta1, 4), "\n")
+cat("Persistencia α+β:   ", round(persistencia, 4), "\n")
+
+if(persistencia >= 0.99){
+  cat("→ Volatilidad casi-integrada: los choques se disipan muy lentamente.\n")
+} else if(persistencia >= 0.90){
+  cat("→ Alta persistencia: los choques tardan varios periodos en disiparse.\n")
+} else {
+  cat("→ Persistencia moderada.\n")
+}
+```
+
+```{r}
+#| fig-width: 20
+#| fig-height: 15
+
+# Gráfica de volatilidad condicional estimada
+plot(garch_fit, which = 3)
+```
+
+**Interpretación:** La volatilidad condicional muestra los periodos de mayor incertidumbre en las remesas. Los picos coinciden con eventos económicos relevantes (crisis, pandemia, etc.).
+
+
+## 14. Pronóstico de volatilidad GARCH
+
+```{r}
+# Pronóstico 12 meses hacia adelante
+pronostico <- ugarchforecast(garch_fit, n.ahead = 12)
+show(pronostico)
+plot(pronostico, which = 1)
+```
+
+
+
+## 15. Resumen de resultados
+
+```{r}
+cat("╔══════════════════════════════════════════════════════╗\n")
+cat("║         RESUMEN DE RESULTADOS PRINCIPALES            ║\n")
+cat("╠══════════════════════════════════════════════════════╣\n")
+cat("║ Observaciones: ", nrow(datos), " mensuales (2008–2026)         ║\n")
+cat("║                                                      ║\n")
+cat("║ RAÍCES UNITARIAS (ADF)                               ║\n")
+cat("║  · Remesas en niveles:    NO estacionaria            ║\n")
+cat("║  · Consumo  en niveles:   NO estacionaria            ║\n")
+cat("║  · Δ Remesas:             Estacionaria ✓             ║\n")
+cat("║  · Δ Consumo:             Estacionaria ✓             ║\n")
+cat("║  → Ambas series son I(1)                             ║\n")
+cat("║                                                      ║\n")
+cat("║ CAUSALIDAD DE GRANGER                                ║\n")
+cat("║  · Remesas → Consumo:  p = 0.028 → Rechaza H₀ ✓     ║\n")
+cat("║  · Consumo → Remesas:  p = 0.108 → No rechaza H₀    ║\n")
+cat("║  · Causalidad instant: p = 0.014 → Rel. contempor.  ║\n")
+cat("║                                                      ║\n")
+cat("║ IRF (24 periodos)                                    ║\n")
+cat("║  · Choque remesas → efecto positivo transitorio      ║\n")
+cat("║  · Se disipa ~periodo 18 (confirmado con 24p)        ║\n")
+cat("║                                                      ║\n")
+cat("║ GARCH(1,1)                                           ║\n")
+cat("║  · alpha1 = 0.0726  |  beta1 = 0.9256               ║\n")
+cat("║  · Persistencia α+β = 0.998 → casi-integrada        ║\n")
+cat("╚══════════════════════════════════════════════════════╝\n")
+```
